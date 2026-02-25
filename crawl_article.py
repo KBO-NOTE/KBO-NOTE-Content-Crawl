@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TODAY = datetime.today().strftime("%Y%m%d")
-TODAY = "20260101"
 
 # =========================
 # Selenium 설정
@@ -26,18 +25,15 @@ TODAY = "20260101"
 url = f"https://m.sports.naver.com/kbaseball/news?sectionId=kbo&sort=latest&date={TODAY}&isPhoto=N"
 
 options = Options()
-options.add_argument("--headless=new")
+options.binary_location = "/usr/bin/google-chrome"
+options.add_argument("--headless")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--disable-gpu")
-options.add_argument("--remote-debugging-port=9222")
-options.add_argument("--window-size=1920,1080")
 
-driver = webdriver.Chrome(options=options)
-
+driver = webdriver.Chrome(options=options) 
 wait = WebDriverWait(driver, 10)
 driver.get(url)
-
 
 # =========================
 # 기사 전처리 함수
@@ -91,12 +87,13 @@ def append_seen_url(article_url):
 # =========================
 def crawl_article_urls():
     # 뉴스 더보기 버튼 모두 클릭
+    more_btn = "button[class^='NewsList_button_more__']"
+    article_sel = "a[class^='NewsItem_link_news__']"
+
     while True:
         try:
-            more_button = wait.until(EC.element_to_be_clickable(
-                (By.CSS_SELECTOR, "button.NewsList_button_more__YH1sc"))
-            )
-
+            more_button = WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.CSS_SELECTOR, more_btn)))
+            WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.CSS_SELECTOR, more_btn)))
             driver.execute_script("arguments[0].click();", more_button)
             time.sleep(0.5)
 
@@ -105,17 +102,13 @@ def crawl_article_urls():
 
     # 기사 링크 크롤링
     try:
-        elements = wait.until(EC.presence_of_all_elements_located(
-            (By.CSS_SELECTOR, "a.NewsItem_link_news__tD7x3"))
-        )
-        hrefs = [
-            el.get_attribute("href")
-            for el in elements
-            if el.get_attribute("href")
-        ]
+        elements = WebDriverWait(driver, 3).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, article_sel)))
+        hrefs = [el.get_attribute("href") for el in elements if el.get_attribute("href")]
+
     except TimeoutException:
         hrefs = []
-        
+
+    print(f"[{TODAY}] Searched {len(hrefs)} Articles.")
     return hrefs
 
 
@@ -129,12 +122,12 @@ def crawl_article_detail(article_urls, retry=False):
             driver.get(article_url)
             wait = WebDriverWait(driver, 10)
             
-            # 중복 발견 → 즉시 종료
+            # 중복 발견
             if not retry and article_url in seen_urls:
-                print(f"[{datetime.now()}] [Warning] Skip Duplicate Article: {article_url}")
+#                print(f"[{datetime.now()}] [Warning] Skip Duplicate Article: {article_url}")
                 continue
 
-            # 중복 아님 → 즉시 기록
+            # 중복 아님
             if not retry:
                 append_seen_url(article_url)
                 seen_urls.add(article_url)
@@ -207,7 +200,7 @@ def crawl_article_detail(article_urls, retry=False):
             }
 
             articles.append(article_json)
-            print(f"[{datetime.now()}] [Info] Crawl Success: {article_url}")
+ #           print(f"[{datetime.now()}] [Info] Crawl Success: {article_url}")
 
         except (TimeoutException, NoSuchElementException):
             print(article_url)
@@ -273,18 +266,21 @@ def save_db(articles):
 
     for article in articles:
         cur.execute(sql, article)
-        content_id = cur.fetchone()[0]
+        row = cur.fetchone()
+        if row:
+            content_id = row[0]
+        else:
+            continue
+
         image_urls = article.get("image_urls") or []
-        
+
         if image_urls:
             rows = [
                 (content_id, image_url, order_index) 
                 for order_index, image_url in enumerate(image_urls)
             ]
             execute_values(
-                cur, 
-                "INSERT INTO kbonote.image (content_id, image_url, order_index) VALUES %s", 
-                rows
+                cur, "INSERT INTO kbonote.image (content_id, image_url, order_index) VALUES %s", rows
             )
 
     conn.commit()
@@ -321,22 +317,19 @@ def get_missing_article_urls():
 
 
 if __name__ == "__main__":
-    # date_list = [
-    #     "20260207", "20260208", "20260209", "20260210", "20260211", "20260212", "20260213",
-    #     "20260214", "20260215", "20260216", "20260217", "20260218", "20260219", "20260220",
-    #     "20260221"
-    # ]
-    # for date in date_list:
-    #     TODAY = date
-    #     url = f"https://m.sports.naver.com/kbaseball/news?sectionId=kbo&sort=latest&date={TODAY}&isPhoto=N"
-    #     driver.get(url)
-        
+#    date_list = [
+#        "20260223"
+#    ]
+#    for date in date_list:
+#        TODAY = date
+#        url = f"https://m.sports.naver.com/kbaseball/news?sectionId=kbo&sort=latest&date={TODAY}&isPhoto=N"
+#        driver.get(url)
     article_urls = crawl_article_urls()
     articles = crawl_article_detail(article_urls)
-        # missing_urls = get_missing_article_urls()
-        # articles = crawl_article_detail(missing_urls, True)
-        
+    print(f"{len(articles)} articles crawled")
+#        missing_urls = get_missing_article_urls()
+#        articles = crawl_article_detail(missing_urls, True)
     save_local(articles)
     save_db(articles)
-    
+
     driver.quit()
