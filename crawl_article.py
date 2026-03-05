@@ -295,7 +295,7 @@ def save_db(articles):
         row = cur.fetchone()
         if row:
             content_id = row[0]
-            cur.execute("INSERT INTO kbonote.content_analysis (content_id) VALUES (%s)", content_id)
+            cur.execute("INSERT INTO kbonote.content_analysis (content_id) VALUES (%s)", (content_id,))
         else:
             continue
 
