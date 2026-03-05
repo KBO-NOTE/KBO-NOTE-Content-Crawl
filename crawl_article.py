@@ -13,6 +13,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from selenium.webdriver.chrome.options import Options
+from urllib3.exceptions import ReadTimeoutError
 from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
 
@@ -85,8 +86,11 @@ def append_seen_url(article_url):
 # =========================
 # 뉴스 크롤링 코드
 # =========================
-def crawl_article_urls():
+def crawl_article_urls(retry=0):
     # 뉴스 더보기 버튼 모두 클릭
+    if retry == 3:
+        return []
+
     more_btn = "button[class^='NewsList_button_more__']"
     article_sel = "a[class^='NewsItem_link_news__']"
 
@@ -106,14 +110,22 @@ def crawl_article_urls():
         hrefs = [el.get_attribute("href") for el in elements if el.get_attribute("href")]
 
     except TimeoutException:
-        hrefs = []
+        print(f"[{datetime.now()}] Page loading timeout while crawling article's url (retry count: {retry})")
+        return crawl_article_urls(retry+1)
+    except ReadTimeoutError:
+        print(f"[{datetime.now()}] ChromeDriver timeout while crawling article's url (retry count: {retry})")
+        return crawl_article_urls(retry+1)
 
     print(f"[{TODAY}] Searched {len(hrefs)} Articles.")
     return hrefs
 
 
-def crawl_article_detail(article_urls, retry=False):
+def crawl_article_detail(article_urls, retry=0, recrawl=False):
     # 기사 상세 크롤링
+    if retry == 3:
+        return None
+
+    global driver  # NOTE: global 함수 비추천 추후 수정
     articles = []
     seen_urls = load_seen_urls()
     
@@ -202,11 +214,25 @@ def crawl_article_detail(article_urls, retry=False):
             articles.append(article_json)
  #           print(f"[{datetime.now()}] [Info] Crawl Success: {article_url}")
 
-        except (TimeoutException, NoSuchElementException):
-            print(article_url)
-            continue
-        
+        except Exception as e:
+            if isinstance(e, TimeoutException):
+                print(f"[{datetime.now()}] [Error] Page loading timeout while crawling article(retry count: {retry}): {article_url}")
+            elif isinstance(e, NoSuchElementException):
+                print(f"[{datetime.now()}] [Error] Fail to find element while crawling article(retry count: {retry}): {article_url}")
+            elif isinstance(e, ReadTimeoutError):
+                print(f"[{datetime.now()}] [Error] ChromeDriver timeout while crawling article(retry count: {retry}): {article_url}")
+                driver.quit()
+                driver = webdriver.Chrome(options=options)
+                print(f"[{datetime.now()}] [Info] ChromeDriver recreate complete")
+            else:
+                print(f"[{datetime.now()}] [Error] Unexpected error occur: {e}")
+
+            article = crawl_article_detail([article_url], retry+1)
+            if article:
+                articles.append(article[0])
+
     return articles
+
 
 
 # =========================
@@ -236,12 +262,12 @@ def save_local(articles):
 # =========================
 def save_db(articles): 
     conn = psycopg2.connect(
-    host=os.getenv("PG_HOST"),
-    port=int(os.getenv("PG_PORT")),
-    user=os.getenv("PG_USER"),
-    password=os.getenv("PG_PASSWORD"),
-    dbname=os.getenv("PG_DBNAME")
-)
+        host=os.getenv("PG_HOST"),
+        port=int(os.getenv("PG_PORT")),
+        user=os.getenv("PG_USER"),
+        password=os.getenv("PG_PASSWORD"),
+        dbname=os.getenv("PG_DBNAME")
+    )
     cur = conn.cursor()
 
     sql = """
@@ -269,6 +295,7 @@ def save_db(articles):
         row = cur.fetchone()
         if row:
             content_id = row[0]
+            cur.execute("INSERT INTO kbonote.content_analysis (content_id) VALUES (%s)", content_id)
         else:
             continue
 
@@ -328,7 +355,7 @@ if __name__ == "__main__":
     articles = crawl_article_detail(article_urls)
     print(f"{len(articles)} articles crawled")
 #        missing_urls = get_missing_article_urls()
-#        articles = crawl_article_detail(missing_urls, True)
+#        articles = crawl_article_detail(missing_urls, recrawl=True)
     save_local(articles)
     save_db(articles)
 

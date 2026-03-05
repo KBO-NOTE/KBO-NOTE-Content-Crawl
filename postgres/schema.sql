@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS kbonote.content (
   image_count BIGINT NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS kbonote.content_analysis (
+  content_id BIGINT PRIMARY KEY
+  REFERENCES  kbonote.content(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS kbonote.image (
   id BIGSERIAL PRIMARY KEY,
   content_id BIGINT NOT NULL,
