@@ -222,6 +222,7 @@ def crawl_article_detail(article_urls, retry=0, recrawl=False):
             elif isinstance(e, ReadTimeoutError):
                 print(f"[{datetime.now()}] [Error] ChromeDriver timeout while crawling article(retry count: {retry}): {article_url}")
                 driver.quit()
+                driver.service.stop()
                 driver = webdriver.Chrome(options=options)
                 print(f"[{datetime.now()}] [Info] ChromeDriver recreate complete")
             else:
@@ -360,3 +361,4 @@ if __name__ == "__main__":
     save_db(articles)
 
     driver.quit()
+    driver.service.stop()
